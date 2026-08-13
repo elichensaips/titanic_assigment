@@ -14,6 +14,8 @@ PyTorch training script → Streamlit evaluation/inference app) on the
 ├── notebooks/
 │   └── eda.ipynb          # exploratory data analysis
 ├── src/
+│   ├── __init__.py        # makes src a regular package (avoids shadowing
+│   │                       # by any same-named package on sys.path)
 │   ├── preprocessing.py   # TitanicPreprocessor: shared feature engineering
 │   └── model.py           # TitanicNet: PyTorch MLP definition
 ├── train.py                # standalone training script
@@ -59,8 +61,8 @@ confusion matrix, an ROC curve, and the training loss/accuracy curves.
 ## Setup
 
 ```bash
-git clone <your-repo-url>
-cd <your-repo>
+git clone https://github.com/elichensaips/titanic_assigment.git
+cd titanic_assigment
 python -m venv .venv && source .venv/bin/activate   # optional but recommended
 pip install -r requirements.txt
 ```
@@ -111,10 +113,13 @@ jupyter notebook notebooks/eda.ipynb
 
 ## Example usage
 
-- Train: `python train.py` → prints per-epoch train/val loss & accuracy,
-  finishes around 82% validation accuracy on the full Kaggle `train.csv`.
+- Train: `python train.py` → prints per-epoch train/val loss & accuracy.
+  Verified run: early-stopped at epoch 47/100, **82.1% validation accuracy**
+  (best val loss 0.5367) on the full Kaggle `train.csv` (712 train / 179
+  validation rows).
 - App: `streamlit run ds_app.py` → opens at `http://localhost:8501` with
-  the two tabs described above.
+  the two tabs described above. Verified end-to-end against
+  `data/sample_train.csv` (86% accuracy on that 50-row sample).
 
 (Add screenshots of the running app here.)
 
