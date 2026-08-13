@@ -2,12 +2,15 @@
 Streamlit app for the Titanic survival classifier.
 
 Three things live here:
-  1. "Validation results"  - shows how the winning model (chosen by
-     train.py out of mlp / deep_mlp / tab_transformer) performed on the
+  1. A model picker — train.py trains and saves every architecture (mlp,
+     deep_mlp, tab_transformer), not just the winner, so the user can choose
+     which one drives the two tabs below. Defaults to train.py's recommended
+     winner (lowest 5-fold CV validation loss).
+  2. "Validation results"  - shows how the selected model performed on the
      held-out validation split, the architecture comparison, and permutation
      feature importance — all read straight from artifacts/.
-  2. "Run inference"       - lets the user point at any CSV with the Titanic
-     schema, loads the saved model + preprocessor from disk, runs
+  3. "Run inference"       - lets the user point at any CSV with the Titanic
+     schema, loads the selected model + preprocessor from disk, runs
      predictions, and (if the CSV has a Survived column) shows evaluation
      plots for it too.
 
@@ -18,6 +21,7 @@ Run:
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -36,8 +40,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-import pickle
-
 from src.architectures import make_model, predict_proba
 
 ARTIFACTS_DIR = Path("artifacts")
@@ -50,17 +52,16 @@ st.set_page_config(page_title="Titanic Survival Classifier", layout="wide")
 # Cached loaders
 # --------------------------------------------------------------------------
 @st.cache_resource
-def load_model_and_preprocessor(artifacts_dir: Path):
-    # preprocessor.pkl deserializes to whichever class train.py pickled
+def load_model_and_preprocessor(artifacts_dir: Path, arch: str):
+    # preprocessor_<arch>.pkl deserializes to whichever class train.py pickled
     # (TitanicPreprocessor for mlp/deep_mlp, TitanicTokenizer for tab_transformer)
-    with open(artifacts_dir / "preprocessor.pkl", "rb") as f:
+    with open(artifacts_dir / f"preprocessor_{arch}.pkl", "rb") as f:
         preprocessor = pickle.load(f)
-    checkpoint = torch.load(artifacts_dir / "model.pt", map_location="cpu")
-    arch = checkpoint["arch"]
+    checkpoint = torch.load(artifacts_dir / f"model_{arch}.pt", map_location="cpu")
     model = make_model(arch, checkpoint["arch_kwargs"])
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
-    return model, arch, preprocessor
+    return model, preprocessor
 
 
 @st.cache_data
@@ -119,29 +120,49 @@ def show_metrics_and_plots(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.n
 # --------------------------------------------------------------------------
 st.title("🚢 Titanic Survival Classifier")
 
-if not (ARTIFACTS_DIR / "model.pt").exists():
+comparison = load_json(ARTIFACTS_DIR, "model_comparison.json")
+available_archs = [k for k, v in comparison.items() if isinstance(v, dict)] if comparison else []
+winner = comparison.get("winner") if comparison else None
+
+if not available_archs:
     st.error(
-        "No trained model found in `artifacts/`. Run `python train.py` first, "
+        "No trained models found in `artifacts/`. Run `python train.py` first, "
         "then reload this app."
     )
     st.stop()
 
-model, arch, preprocessor = load_model_and_preprocessor(ARTIFACTS_DIR)
+available_archs = sorted(available_archs, key=lambda a: comparison[a]["cv_mean_val_loss"])
+
+
+def _label(a: str) -> str:
+    cv_acc = comparison[a]["cv_mean_val_acc"]
+    suffix = " ⭐ (recommended — lowest CV loss)" if a == winner else ""
+    return f"{a}  —  {cv_acc:.1%} CV accuracy{suffix}"
+
+
+arch = st.selectbox(
+    "Model",
+    options=available_archs,
+    index=available_archs.index(winner) if winner in available_archs else 0,
+    format_func=_label,
+    help="train.py trains and saves every architecture; the ⭐ one has the lowest "
+    "5-fold cross-validation loss on the training split. Switch to compare them.",
+)
+
+model, preprocessor = load_model_and_preprocessor(ARTIFACTS_DIR, arch)
 history = load_json(ARTIFACTS_DIR, "history.json")
-comparison = load_json(ARTIFACTS_DIR, "model_comparison.json")
-importance = load_json(ARTIFACTS_DIR, "feature_importance.json")
+importance_all = load_json(ARTIFACTS_DIR, "feature_importance.json")
+importance = importance_all.get(arch) if importance_all else None
 
 tab_val, tab_infer = st.tabs(["📊 Validation results", "🔮 Run inference"])
 
 # ---- Tab 1: results on the held-out split from train.py -------------------
 with tab_val:
     st.subheader("Performance on the held-out validation split")
-    arch_names = [k for k, v in comparison.items() if isinstance(v, dict)] if comparison else None
     st.caption(
-        f"Winning architecture: **{arch}** (selected by train.py out of "
-        f"{', '.join(arch_names) if arch_names else 'mlp / deep_mlp / tab_transformer'} "
-        "via cross-validation). This is the held-out split `train.py` set aside before "
-        "fitting any model (saved to `artifacts/val_split.csv`) — none of them trained on these rows."
+        f"Showing **{arch}**. This is the held-out split `train.py` set aside before "
+        "fitting any model (saved to `artifacts/val_split.csv`) — none of the "
+        "architectures trained on these rows."
     )
 
     val_path = ARTIFACTS_DIR / "val_split.csv"
@@ -180,7 +201,7 @@ with tab_val:
         st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
     if importance:
-        st.subheader("Feature importance (permutation, winning model)")
+        st.subheader(f"Feature importance (permutation, {arch})")
         st.caption(
             "Each feature is shuffled in the validation set and the resulting drop in "
             "accuracy is measured — a larger drop means the model relies on that feature more. "
@@ -193,9 +214,9 @@ with tab_val:
         ax.set_title("Permutation feature importance")
         st.pyplot(fig)
 
-    if history:
+    if history and arch in history:
         st.subheader("Training curves")
-        arch_history = history.get(arch, history)  # tolerate an older flat history.json
+        arch_history = history[arch]
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.5))
         ax1.plot(arch_history["train_loss"], label="train")
         ax1.plot(arch_history["val_loss"], label="validation")
@@ -213,9 +234,10 @@ with tab_val:
 with tab_infer:
     st.subheader("Run inference on a CSV")
     st.caption(
-        "Provide a CSV with the standard Titanic columns "
-        "(PassengerId, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked). "
-        "If it also has a `Survived` column, evaluation metrics/plots are shown."
+        f"Using **{arch}** (change the model picker above to switch). Provide a CSV with "
+        "the standard Titanic columns (PassengerId, Pclass, Name, Sex, Age, SibSp, Parch, "
+        "Ticket, Fare, Cabin, Embarked). If it also has a `Survived` column, evaluation "
+        "metrics/plots are shown."
     )
 
     csv_path = st.text_input("Path to CSV file", value="data/sample_train.csv")

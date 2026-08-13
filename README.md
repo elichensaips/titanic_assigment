@@ -25,9 +25,10 @@ PyTorch training script → Streamlit evaluation/inference app) on the
 ├── train.py                  # standalone training + architecture-comparison script
 ├── ds_app.py                 # Streamlit app: validation results + inference UI
 ├── requirements.txt
-└── artifacts/                 # created by train.py (gitignored): model.pt,
-                                # preprocessor.pkl, val_split.csv, history.json,
-                                # model_comparison.json, feature_importance.json
+└── artifacts/                 # created by train.py (gitignored): model_<arch>.pt,
+                                # preprocessor_<arch>.pkl per architecture, plus
+                                # val_split.csv, history.json, model_comparison.json,
+                                # feature_importance.json
 ```
 
 **Why a shared preprocessor.** The exact same feature engineering and fitted
@@ -172,22 +173,26 @@ python train.py
 # optional flags: --data data/train.csv --epochs 100 --val-size 0.2 --batch-size 32 --lr 1e-3
 # --archs mlp,deep_mlp,tab_transformer   (comma-separated subset to train/compare)
 ```
-This writes `artifacts/model.pt` (the winning architecture's weights +
-metadata), `artifacts/preprocessor.pkl`, `artifacts/val_split.csv`,
-`artifacts/history.json`, `artifacts/model_comparison.json`, and
-`artifacts/feature_importance.json`.
+This writes, per architecture, `artifacts/model_<arch>.pt` (weights +
+metadata) and `artifacts/preprocessor_<arch>.pkl`, plus the shared
+`artifacts/val_split.csv`, `artifacts/history.json`,
+`artifacts/model_comparison.json`, and `artifacts/feature_importance.json`.
 
 **2. Launch the app:**
 ```bash
 streamlit run ds_app.py
 ```
-- **Validation results tab** — metrics/plots on the held-out split, the
-  architecture comparison table, permutation feature importance, and
-  training curves, read straight from `artifacts/`.
+- **Model picker** — a dropdown above the tabs lets you choose which trained
+  architecture (`mlp` / `deep_mlp` / `tab_transformer`) drives both tabs
+  below, labeled with each one's CV accuracy; the ⭐ option is train.py's
+  recommended winner (lowest CV loss), pre-selected by default.
+- **Validation results tab** — metrics/plots on the held-out split for the
+  selected model, the architecture comparison table, permutation feature
+  importance, and training curves, read straight from `artifacts/`.
 - **Run inference tab** — point at any CSV with the Titanic schema (a file
-  path or an upload). If the CSV has a `Survived` column, evaluation plots
-  are shown too; otherwise you just get predictions + a download button.
-  Try it against `data/sample_train.csv`.
+  path or an upload) and run it through the selected model. If the CSV has
+  a `Survived` column, evaluation plots are shown too; otherwise you just
+  get predictions + a download button. Try it against `data/sample_train.csv`.
 
 **3. Explore the notebooks:**
 ```bash

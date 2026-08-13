@@ -11,16 +11,19 @@ Architecture selection uses stratified K-fold cross-validation on the
 training split (not the single held-out val split) — with only ~700 rows,
 a single 80/20 split is noisy enough that two close architectures can flip
 rank from one split to another. The held-out val split is still what gets
-reported/saved for the winner (that's the assignment's required
-train/validation evaluation split), CV is just a more robust tie-breaker
-for *which* architecture to trust.
+reported/saved (that's the assignment's required train/validation
+evaluation split), CV is just a more robust tie-breaker for *which*
+architecture to recommend as the default.
 
-    artifacts/model.pt              - best-performing model's weights + arch metadata
-    artifacts/preprocessor.pkl      - the (matching) fitted preprocessor/tokenizer
-    artifacts/val_split.csv         - held-out validation rows
-    artifacts/history.json          - per-epoch train/val loss & accuracy, per architecture
-    artifacts/model_comparison.json - final val loss/accuracy for every architecture tried
-    artifacts/feature_importance.json - permutation feature importance of the winner
+Every trained architecture is saved (not just the winner), so ds_app.py can
+let the user pick which model to run:
+
+    artifacts/model_<arch>.pt         - each architecture's weights + metadata
+    artifacts/preprocessor_<arch>.pkl - each architecture's fitted preprocessor/tokenizer
+    artifacts/val_split.csv           - held-out validation rows (shared, same split for all)
+    artifacts/history.json            - per-epoch train/val loss & accuracy, per architecture
+    artifacts/model_comparison.json   - CV + held-out val loss/accuracy per architecture, and the winner
+    artifacts/feature_importance.json - permutation feature importance, per architecture
 
 Usage:
     python train.py
@@ -303,19 +306,8 @@ def main() -> None:
         f"held-out val_acc={results[winner]['best_val_acc']:.3f})"
     )
 
-    winner_model = make_model(winner, results[winner]["meta"]).to(device)
-    winner_model.load_state_dict(results[winner]["best_state"])
-
-    torch.save(
-        {
-            "state_dict": results[winner]["best_state"],
-            "arch": winner,
-            "arch_kwargs": results[winner]["meta"],
-        },
-        artifacts_dir / "model.pt",
-    )
-    results[winner]["preprocessor"].save(artifacts_dir / "preprocessor.pkl")
-
+    # ---- Save every trained architecture (not just the winner), so the
+    # Streamlit app can let the user pick which one to run --------------------
     history_out = {a: results[a]["history"] for a in results}
     history_out["winner"] = winner
     with open(artifacts_dir / "history.json", "w") as f:
@@ -337,19 +329,31 @@ def main() -> None:
     with open(artifacts_dir / "model_comparison.json", "w") as f:
         json.dump(comparison, f, indent=2)
 
-    print("\nComputing permutation feature importance for the winning model...")
-    importance = permutation_importance(
-        winner_model, winner, results[winner]["preprocessor"], val_df, device
-    )
+    print("\nSaving all trained architectures and their permutation feature importance...")
+    importance_out = {}
+    for a in results:
+        model = make_model(a, results[a]["meta"]).to(device)
+        model.load_state_dict(results[a]["best_state"])
+
+        torch.save(
+            {"state_dict": results[a]["best_state"], "arch": a, "arch_kwargs": results[a]["meta"]},
+            artifacts_dir / f"model_{a}.pt",
+        )
+        results[a]["preprocessor"].save(artifacts_dir / f"preprocessor_{a}.pkl")
+
+        importance_out[a] = permutation_importance(model, a, results[a]["preprocessor"], val_df, device)
+        print(f"  [{a}] saved model_{a}.pt, preprocessor_{a}.pkl" + (" (winner)" if a == winner else ""))
+
+    importance_out["winner"] = winner
     with open(artifacts_dir / "feature_importance.json", "w") as f:
-        json.dump(importance, f, indent=2)
-    top5 = list(importance["importances"].items())[:5]
-    print("Top 5 features by permutation importance (accuracy drop when shuffled):")
+        json.dump(importance_out, f, indent=2)
+
+    top5 = list(importance_out[winner]["importances"].items())[:5]
+    print(f"\nTop 5 features by permutation importance for the winner ('{winner}'):")
     for name, drop in top5:
         print(f"  {name:20s} {drop:+.4f}")
 
-    print(f"\nSaved model -> {artifacts_dir / 'model.pt'}")
-    print(f"Saved preprocessor -> {artifacts_dir / 'preprocessor.pkl'}")
+    print(f"\nSaved {len(results)} model(s) + preprocessor(s) to {artifacts_dir}/")
     print(f"Saved comparison -> {artifacts_dir / 'model_comparison.json'}")
     print(f"Saved feature importance -> {artifacts_dir / 'feature_importance.json'}")
 
