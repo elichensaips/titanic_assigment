@@ -115,11 +115,12 @@ Transformer depending on the run.
 
 **Benchmarking against classic SOTA baselines.**
 `notebooks/model_benchmark.ipynb` is a bonus, non-graded notebook that
-trains Logistic Regression, Random Forest, HistGradientBoosting, and
-XGBoost on the *same* train/val split and feature engineering, for context
-on how the PyTorch models compare to strong classical tabular baselines. It
-is not part of the required deliverable — `train.py`'s saved model is always
-one of the three PyTorch architectures above.
+trains Logistic Regression, Random Forest, HistGradientBoosting, XGBoost,
+LightGBM, and CatBoost on the *same* train/val split, feature engineering,
+and 5-fold CV as `train.py`, for context on how the PyTorch models compare
+to strong classical tabular baselines. It is not part of the required
+deliverable — `train.py`'s saved model is always one of the three PyTorch
+architectures above.
 
 ## Setup
 
@@ -197,10 +198,14 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
   more confident margin than the single held-out split alone would suggest,
   which is exactly why CV was added for architecture selection.
 - Benchmark notebook: on the same 5-fold CV, the strongest classical
-  baseline was HistGradientBoosting at 83.3% — in the same band as the
-  PyTorch MLPs, with the PyTorch `tab_transformer` ahead of all of them on
-  this run (see the notebook's takeaways for discussion, including why its
-  CV std is wider than the tree-based baselines').
+  baseline was **CatBoost at 84.4% ± 1.9%** — close behind
+  `tab_transformer` (85.1% ± 1.8%, similarly tight variance, so it's a real
+  if modest edge, not noise). XGBoost and LightGBM trailed at ~81.9% despite
+  their reputation; HistGradientBoosting/Random Forest/Logistic Regression
+  landed in the same band as the PyTorch MLPs (~83%). See the notebook's
+  takeaways for discussion, including why this shouldn't be read as a
+  strong general claim that transformers beat gradient boosting on small
+  tabular data.
 - Top permutation-importance features for the winning model: `Title`, `Sex`,
   `Pclass`, `FamilySize`, `GroupSurvivalRate` — consistent with the
   "women, children, and travel-party fate" signal the EDA notebook

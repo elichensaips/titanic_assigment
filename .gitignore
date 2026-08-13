@@ -9,3 +9,4 @@ data/train.csv.zip
 .streamlit/
 .DS_Store
 .idea/
+catboost_info/
