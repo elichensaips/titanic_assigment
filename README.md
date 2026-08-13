@@ -174,6 +174,20 @@ see below). The app reports accuracy/precision/recall/F1, a confusion
 matrix, an ROC curve, the architecture comparison table, a feature
 importance chart, and training curves.
 
+**Training curves show only the checkpoint that was actually saved.**
+`tab_transformer` in particular visibly overfits if you let it train long
+enough — training loss keeps dropping while validation loss plateaus/rises.
+That's expected (attention over ~20 tokens is a lot of capacity for ~700
+rows) and early stopping (`--patience`, default 15 epochs) already handles
+it correctly: `run_training()` only updates its saved `best_state` when
+validation loss *improves*, so the weights that ship in `model_<arch>.pt`
+come from whichever epoch had the lowest validation loss, not the final
+epoch. The app's training-curve plot mirrors this — it's truncated to that
+best epoch (with a dashed vertical line marking it), rather than plotting
+the full run including the post-overfitting patience window, so the chart
+shown matches what was actually deployed instead of implying the model rode
+out the whole overfitting tail.
+
 **Feature importance.** `src/importance.py` computes **permutation
 importance** for the winning model, whichever architecture it is: each
 engineered feature is shuffled in the validation set and the resulting drop
@@ -353,8 +367,8 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
 **Permutation feature importance**
 ![Permutation feature importance bar chart](docs/screenshots/04_feature_importance.jpg)
 
-**Training curves**
-![Loss and accuracy training curves for tab_transformer](docs/screenshots/05_training_curves.jpg)
+**Training curves — truncated to the saved checkpoint**
+![Loss and accuracy training curves for tab_transformer, truncated at the best epoch with a dashed marker line](docs/screenshots/05_training_curves.jpg)
 
 **Run inference tab — CatBoost selected, CSV loaded**
 ![Run inference tab using CatBoost with sample_train.csv loaded](docs/screenshots/06_run_inference.jpg)

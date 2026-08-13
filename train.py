@@ -116,6 +116,7 @@ def run_training(arch, model, train_loader, val_loader, device, args, pos_weight
     history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
     best_val_loss = float("inf")
     best_val_acc = 0.0
+    best_epoch = 0
     epochs_no_improve = 0
     best_state = None
 
@@ -164,6 +165,7 @@ def run_training(arch, model, train_loader, val_loader, device, args, pos_weight
         if val_loss < best_val_loss - 1e-4:
             best_val_loss = val_loss
             best_val_acc = val_acc
+            best_epoch = epoch
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
             epochs_no_improve = 0
         else:
@@ -173,6 +175,7 @@ def run_training(arch, model, train_loader, val_loader, device, args, pos_weight
                     print(f"  [{arch}] early stopping at epoch {epoch} (no improvement for {args.patience} epochs)")
                 break
 
+    history["best_epoch"] = best_epoch
     return best_state, best_val_loss, best_val_acc, history
 
 
