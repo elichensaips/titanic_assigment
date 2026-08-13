@@ -83,17 +83,70 @@ each choice):
   validation.
 
 **Models — three PyTorch architectures, compared via cross-validation.**
-`train.py` trains all three:
-- `mlp` — small 2-hidden-layer MLP (32→16 units, ReLU, dropout 0.3).
-- `deep_mlp` — a deeper variant (64→32→16 units) for more capacity.
-- `tab_transformer` — a small FT-Transformer-style network
-  (`src/model.py::TabTransformerNet`): each feature (numeric or categorical)
-  is embedded into its own token, a learnable `[CLS]` token is prepended,
-  and a `nn.TransformerEncoder` attends over them; the `[CLS]` output feeds
-  the classification head. Included as a genuine architecture comparison,
-  not because it's expected to dominate — attention over ~20 tokens is a lot
-  of extra capacity for ~700 training rows, and the benchmark notebook
-  discusses that tradeoff.
+`train.py` trains all three, then keeps the one CV likes best (see below) —
+but all three are always saved, and `ds_app.py`'s model picker lets you
+inspect/run any of them.
+
+*`mlp` and `deep_mlp`* are the same class (`src/model.py::TitanicNet`), just
+instantiated with different `hidden_sizes` — one architecture, two capacity
+settings, so they're directly comparable with nothing else changing:
+
+```python
+class TitanicNet(nn.Module):
+    def __init__(self, n_features, hidden_sizes=(32, 16), dropout=0.3):
+        # stack of Linear -> ReLU -> Dropout blocks, ending in one
+        # un-activated logit (BCEWithLogitsLoss applies sigmoid internally)
+```
+- `mlp`: `hidden_sizes=(32, 16)` — input (33 features after one-hot) → 32 → 16 → 1.
+- `deep_mlp`: `hidden_sizes=(64, 32, 16)` — one extra layer, roughly double
+  the first-layer width.
+
+With only ~33 features over ~700 training rows, `32→16` was picked as
+"enough capacity to find nonlinear feature interactions (e.g. `Sex` ×
+`Pclass`) without wildly overparameterizing." `deep_mlp` exists to actually
+*test* whether more capacity helps rather than assuming it does — and per
+the CV results it barely does (84.1% vs. `mlp`'s 84.0% CV accuracy),
+evidence the smaller model already has enough capacity for this problem.
+**Dropout 0.3** (fairly aggressive — the risk here is overfitting 700 rows,
+not underfitting) plus **weight decay** on Adam and **early stopping** on
+validation loss round out the regularization.
+
+*`tab_transformer`* (`src/model.py::TabTransformerNet`) is structurally
+different: instead of concatenating every feature into one flat vector, it
+treats each *feature* as a token in a sequence, the way a Transformer treats
+each word in a sentence, and lets self-attention learn which features
+matter jointly rather than hand-designing interaction terms.
+1. **Tokenize every column individually.** Each numeric feature (`Age`,
+   `Fare`, `GroupSurvivalRate`, ...) gets its own `nn.Linear(1, d_model)` —
+   a dedicated learned projection from a single scalar up to a
+   `d_model`-dim vector. Each categorical feature (`Sex`, `Title`, `Deck`,
+   ...) gets its own `nn.Embedding(cardinality, d_model)`. This is why the
+   app needs `TitanicTokenizer` instead of `TitanicPreprocessor` for this
+   architecture — numerics stay as separate scaled scalars and categoricals
+   stay as separate integer indices, rather than being flattened/one-hot
+   encoded, so each column can be tokenized on its own.
+2. **Prepend a learnable `[CLS]` token** (borrowed from BERT) and run the
+   full sequence through `nn.TransformerEncoder` (`d_model=32`, `n_heads=4`,
+   `n_layers=2`, `dim_feedforward=4×d_model` — deliberately small: a
+   standard NLP Transformer has hundreds of dimensions and dozens of
+   layers, but here there are only ~20 "words" (features) per "sentence"
+   (row) and ~700 sentences total, so anything larger would overfit
+   immediately). `[CLS]` has no feature of its own; it attends over every
+   real feature token and ends up holding a pooled, attention-weighted
+   summary of the whole row.
+3. **Classify from the `[CLS]` output**: `LayerNorm → Dropout(0.2) →
+   Linear(d_model, 1)` → one logit, same convention as the MLPs.
+
+The docstring on `TabTransformerNet` is explicit that it's included "as a
+genuine architecture comparison, not because it's expected to dominate" —
+attention over ~20 tokens is a lot of capacity for 700 rows. The actual
+result is genuinely interesting anyway: it comes out with the **highest CV
+accuracy of all 12 models** in this project (85.7%), PyTorch or classical
+baseline, though `mlp` still wins on CV *loss* by a hair (see below for why
+that's the metric `train.py` optimizes for). See
+`notebooks/model_benchmark.ipynb`'s takeaways for why this one result
+shouldn't be read as "transformers beat gradient boosting on small tabular
+data" as a general claim.
 
 All three are trained with `BCEWithLogitsLoss` using a `pos_weight` to
 correct for the ~62/38 class imbalance, Adam with weight decay, and early
