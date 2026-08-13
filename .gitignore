@@ -10,3 +10,4 @@ data/train.csv.zip
 .DS_Store
 .idea/
 catboost_info/
+Thumbs.db

@@ -288,23 +288,29 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
 
 ### Screenshots
 
+**Model picker — every model, labeled by kind and CV accuracy**
+![Model picker dropdown open, showing all 12 models with their kind and CV accuracy](docs/screenshots/01_model_picker.jpg)
+
 **Validation results — default model (`tab_transformer`)**
-![Validation results: metrics, confusion matrix, ROC curve](docs/screenshots/01_validation_results.jpg)
+![Validation results: accuracy/precision/recall/F1, confusion matrix, ROC curve](docs/screenshots/02_validation_results.jpg)
 
-**Model comparison table — all 12 models ranked by CV loss**
-![Model comparison table](docs/screenshots/02_model_comparison.jpg)
+**Model comparison table — ranked by CV loss**
+![Model comparison table with cv_val_loss, cv_val_accuracy, and held-out columns](docs/screenshots/03_model_comparison.jpg)
 
-**Permutation feature importance + training curves**
-![Feature importance and training curves](docs/screenshots/03_feature_importance_and_training_curves.jpg)
+**Permutation feature importance**
+![Permutation feature importance bar chart](docs/screenshots/04_feature_importance.jpg)
 
-**Switching to a classical baseline (CatBoost) via the model picker**
-![CatBoost selected, with the classical-baseline info banner](docs/screenshots/04_catboost_selected.jpg)
+**Training curves**
+![Loss and accuracy training curves for tab_transformer](docs/screenshots/05_training_curves.jpg)
 
-**Run inference tab — CSV loaded**
-![Run inference tab with sample_train.csv loaded](docs/screenshots/05_run_inference.jpg)
+**Run inference tab — CatBoost selected, CSV loaded**
+![Run inference tab using CatBoost with sample_train.csv loaded](docs/screenshots/06_run_inference.jpg)
 
-**Inference results with predictions**
-![Inference predictions and download button](docs/screenshots/06_inference_results.jpg)
+**Inference predictions + download button**
+![Inference results table with PredictedSurvival/SurvivalProbability columns](docs/screenshots/07_inference_predictions.jpg)
+
+**Inference evaluation — ground truth found in the CSV**
+![Evaluation metrics, confusion matrix, and ROC curve for the inference run](docs/screenshots/08_inference_evaluation.jpg)
 
 ## Reproducibility notes
 
