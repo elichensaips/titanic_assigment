@@ -182,11 +182,10 @@ rows) and early stopping (`--patience`, default 15 epochs) already handles
 it correctly: `run_training()` only updates its saved `best_state` when
 validation loss *improves*, so the weights that ship in `model_<arch>.pt`
 come from whichever epoch had the lowest validation loss, not the final
-epoch. The app's training-curve plot mirrors this — it's truncated to that
-best epoch (with a dashed vertical line marking it), rather than plotting
-the full run including the post-overfitting patience window, so the chart
-shown matches what was actually deployed instead of implying the model rode
-out the whole overfitting tail.
+epoch. The app's training-curve plot shows the full run (so the overfitting
+tail is visible, not hidden) with a dashed vertical line marking that best
+epoch — everything after the line is the patience window the model kept
+training through without improving, and was never saved.
 
 **Feature importance.** `src/importance.py` computes **permutation
 importance** for the winning model, whichever architecture it is: each
@@ -374,8 +373,8 @@ contradiction — see "Models" above for the full reasoning.*
 **Permutation feature importance**
 ![Permutation feature importance bar chart](docs/screenshots/04_feature_importance.jpg)
 
-**Training curves — truncated to the saved checkpoint**
-![Loss and accuracy training curves for tab_transformer, truncated at the best epoch with a dashed marker line](docs/screenshots/05_training_curves.jpg)
+**Training curves — full run, with the saved checkpoint marked**
+![Loss and accuracy training curves for tab_transformer across the full run, with a dashed line marking the best (saved) epoch](docs/screenshots/05_training_curves.jpg)
 
 **Run inference tab — CatBoost selected, CSV loaded**
 ![Run inference tab using CatBoost with sample_train.csv loaded](docs/screenshots/06_run_inference.jpg)

@@ -283,25 +283,25 @@ with tab_val:
         best_epoch = arch_history.get("best_epoch") or total_epochs
 
         st.caption(
-            f"Shown up to epoch {best_epoch} — the epoch with the lowest validation loss, "
-            f"i.e. the weights actually saved to `model_{arch}.pt`. Training continued to epoch "
-            f"{total_epochs} (early-stopping patience) without improving further; those extra "
-            "epochs would only show the model overfitting past the point it was checkpointed, so "
-            "they're trimmed here rather than left in as noise."
+            f"Full training run ({total_epochs} epochs) — the dashed line marks epoch "
+            f"{best_epoch}, the lowest validation loss, i.e. the weights actually saved to "
+            f"`model_{arch}.pt`. Training continued past it (early-stopping patience) without "
+            "improving further, so the curve after the line shows the model overfitting past "
+            "the point it was checkpointed at — that tail was never saved."
             if best_epoch < total_epochs
             else f"Trained for all {total_epochs} epochs without early stopping triggering."
         )
 
-        epochs = list(range(1, best_epoch + 1))
+        epochs = list(range(1, total_epochs + 1))
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.5))
-        ax1.plot(epochs, arch_history["train_loss"][:best_epoch], label="train")
-        ax1.plot(epochs, arch_history["val_loss"][:best_epoch], label="validation")
+        ax1.plot(epochs, arch_history["train_loss"], label="train")
+        ax1.plot(epochs, arch_history["val_loss"], label="validation")
         ax1.axvline(best_epoch, color="gray", linestyle="--", linewidth=1, label="best epoch (saved)")
         ax1.set_title(f"Loss ({arch})")
         ax1.set_xlabel("Epoch")
         ax1.legend()
-        ax2.plot(epochs, arch_history["train_acc"][:best_epoch], label="train")
-        ax2.plot(epochs, arch_history["val_acc"][:best_epoch], label="validation")
+        ax2.plot(epochs, arch_history["train_acc"], label="train")
+        ax2.plot(epochs, arch_history["val_acc"], label="validation")
         ax2.axvline(best_epoch, color="gray", linestyle="--", linewidth=1, label="best epoch (saved)")
         ax2.set_title(f"Accuracy ({arch})")
         ax2.set_xlabel("Epoch")
