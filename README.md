@@ -284,7 +284,25 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
   `data/sample_train.csv` for every model (84-94% accuracy on that 50-row
   sample, depending on which model is selected).
 
-(Add screenshots of the running app here.)
+### Screenshots
+
+**Validation results — default PyTorch winner (`mlp`)**
+![Validation results: metrics, confusion matrix, ROC curve](docs/screenshots/01_validation_results.jpg)
+
+**Model comparison table — all 12 models ranked by CV loss**
+![Model comparison table](docs/screenshots/02_model_comparison.jpg)
+
+**Permutation feature importance + training curves**
+![Feature importance and training curves](docs/screenshots/03_feature_importance_and_training_curves.jpg)
+
+**Switching to a classical baseline (CatBoost) via the model picker**
+![CatBoost selected, with the classical-baseline info banner](docs/screenshots/04_catboost_selected.jpg)
+
+**Run inference tab — CSV loaded**
+![Run inference tab with sample_train.csv loaded](docs/screenshots/05_run_inference.jpg)
+
+**Inference results with predictions**
+![Inference predictions and download button](docs/screenshots/06_inference_results.jpg)
 
 ## Reproducibility notes
 
