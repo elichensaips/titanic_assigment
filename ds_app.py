@@ -8,10 +8,12 @@ Three things live here:
      baselines (Logistic Regression, KNN, Naive Bayes, SVM, Random Forest,
      HistGradientBoosting, XGBoost, LightGBM, CatBoost). Every model found
      in artifacts/ shows up here so the user can choose which one drives the
-     two tabs below. Defaults to whichever has the lowest 5-fold CV
-     validation loss overall. **The assignment's required deliverable is
-     train.py's PyTorch model** — the classical baselines are bonus context,
-     clearly labeled as such below.
+     two tabs below. Defaults to tab_transformer (highest CV accuracy of
+     every model here). train.py's own pick — mlp, by lowest CV loss among
+     just the 3 PyTorch architectures — is labeled separately and still one
+     selection away. **The assignment's required deliverable is train.py's
+     PyTorch model** (mlp / deep_mlp / tab_transformer, all three shown) —
+     the classical baselines are bonus context, clearly labeled as such below.
   2. "Validation results"  - shows how the selected model performed on the
      held-out validation split, the full model comparison table, and
      permutation feature importance — all read straight from artifacts/.
@@ -156,21 +158,27 @@ if not comparison:
     st.stop()
 
 available_names = sorted(comparison, key=lambda n: comparison[n]["cv_mean_val_loss"])
-# Default selection stays train.py's own PyTorch winner (the assignment's required
-# deliverable) even if a classical baseline scores lower CV loss overall — that
-# result is still fully visible in the table/dropdown, just not what auto-loads.
+# train.py's own winner (by lowest CV loss among the 3 required PyTorch
+# architectures) is still labeled and always visible, but the app's default
+# selection is pinned to tab_transformer — it has the highest CV accuracy of
+# every model here, PyTorch or baseline (see README "Example usage" for the
+# full loss-vs-accuracy discussion behind train.py's own, different pick).
 pytorch_winner = pytorch_comparison.get("winner")
 overall_best = min(comparison, key=lambda n: comparison[n]["cv_mean_val_loss"])
-default_selection = pytorch_winner if pytorch_winner in comparison else overall_best
+default_selection = "tab_transformer" if "tab_transformer" in comparison else (
+    pytorch_winner if pytorch_winner in comparison else overall_best
+)
 
 
 def _label(name: str) -> str:
     cv_acc = comparison[name]["cv_mean_val_acc"]
     kind = "PyTorch" if is_pytorch(name) else "classical baseline"
     tags = []
-    if name == pytorch_winner:
-        tags.append("⭐ required-model winner")
-    if name == overall_best and name != pytorch_winner:
+    if name == default_selection:
+        tags.append("📌 loads by default — highest CV accuracy")
+    if name == pytorch_winner and name != default_selection:
+        tags.append("⭐ train.py's own CV-loss winner")
+    if name == overall_best and name not in (default_selection, pytorch_winner):
         tags.append("🏆 lowest CV loss overall")
     suffix = f" ({', '.join(tags)})" if tags else ""
     return f"{name}  —  {kind}  —  {cv_acc:.1%} CV accuracy{suffix}"
@@ -182,9 +190,11 @@ arch = st.selectbox(
     index=available_names.index(default_selection),
     format_func=_label,
     help="train.py's mlp / deep_mlp / tab_transformer are the assignment's required "
-    "PyTorch deliverable (⭐ marks train.py's own winner, pre-selected by default); "
-    "any other names come from the optional, bonus train_baselines.py script. 🏆 marks "
-    "whichever model has the lowest CV loss across *all* of them, PyTorch or not.",
+    "PyTorch deliverable. 📌 tab_transformer is pre-selected by default (highest CV "
+    "accuracy overall); ⭐ marks train.py's own pick instead, chosen by lowest CV loss "
+    "among just the 3 PyTorch architectures; 🏆 marks the lowest CV loss across *all* "
+    "models, PyTorch or not. Any name that isn't mlp/deep_mlp/tab_transformer comes "
+    "from the optional, bonus train_baselines.py script.",
 )
 if not is_pytorch(arch):
     st.info(

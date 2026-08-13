@@ -141,8 +141,8 @@ models compare to strong (and not-so-strong) classical tabular baselines.
 is `train.py`'s PyTorch model, which is always one of `mlp` / `deep_mlp` /
 `tab_transformer`. Run `python train_baselines.py` (after `train.py`) and
 `ds_app.py`'s model picker will show every baseline alongside the PyTorch
-architectures, clearly labeled by kind, with the PyTorch winner still
-pre-selected by default regardless of whether a baseline scores lower.
+architectures, clearly labeled by kind, with a PyTorch model (`tab_transformer`)
+still pre-selected by default regardless of whether a baseline scores lower.
 
 ## Setup
 
@@ -202,10 +202,11 @@ streamlit run ds_app.py
 ```
 - **Model picker** — a dropdown above the tabs lists every model found in
   `artifacts/` (the 3 required PyTorch architectures, plus any classical
-  baselines from step 2), labeled with kind and CV accuracy. ⭐ marks
-  `train.py`'s own PyTorch winner (lowest CV loss among `mlp` / `deep_mlp` /
-  `tab_transformer`) and is pre-selected by default; 🏆 marks whichever
-  model has the lowest CV loss overall, if that's a different (baseline) model.
+  baselines from step 2), labeled with kind and CV accuracy. 📌
+  `tab_transformer` is pre-selected by default (highest CV accuracy overall);
+  ⭐ marks `train.py`'s own pick instead (lowest CV loss among just the 3
+  PyTorch architectures — currently `mlp`); 🏆 marks whichever model has the
+  lowest CV loss overall, if that's a different (baseline) model.
 - **Validation results tab** — metrics/plots on the held-out split for the
   selected model, the full model comparison table, permutation feature
   importance, and training curves (PyTorch models only — classical
@@ -273,11 +274,12 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
   pair's *accuracy* is respectable (81.5% / 78.8%) despite the terrible
   loss — both output poorly-calibrated probabilities (confidently wrong
   more often than they should be), which log loss punishes hard but plain
-  accuracy doesn't notice. In `ds_app.py`, `mlp` still loads by default
-  (it's `train.py`'s own PyTorch winner, the required deliverable) even
-  though CatBoost scores lower CV loss overall — that result is fully
-  visible in the app's comparison table and selectable, just not what
-  auto-loads.
+  accuracy doesn't notice. In `ds_app.py`, `tab_transformer` loads by
+  default (highest CV accuracy overall, and still one of the 3 required
+  PyTorch architectures) even though CatBoost scores lower CV loss —
+  `train.py`'s own pick (`mlp`, by lowest CV loss among just the PyTorch
+  architectures) and CatBoost's result are both fully visible in the app's
+  comparison table and selectable, just not what auto-loads.
 - App: `streamlit run ds_app.py` → opens at `http://localhost:8501` with a
   model picker (12 models once both training scripts have been run) plus
   the two tabs described above. Verified end-to-end against
@@ -286,7 +288,7 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
 
 ### Screenshots
 
-**Validation results — default PyTorch winner (`mlp`)**
+**Validation results — default model (`tab_transformer`)**
 ![Validation results: metrics, confusion matrix, ROC curve](docs/screenshots/01_validation_results.jpg)
 
 **Model comparison table — all 12 models ranked by CV loss**
