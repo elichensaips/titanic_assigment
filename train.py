@@ -46,7 +46,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.architectures import ARCH_NAMES, forward, make_model, make_preprocessor
-from src.importance import permutation_importance
+from src.importance import permutation_importance, torch_predict_fn
 
 SEED = 42
 
@@ -341,7 +341,8 @@ def main() -> None:
         )
         results[a]["preprocessor"].save(artifacts_dir / f"preprocessor_{a}.pkl")
 
-        importance_out[a] = permutation_importance(model, a, results[a]["preprocessor"], val_df, device)
+        predict_fn = torch_predict_fn(model, a, results[a]["preprocessor"], device)
+        importance_out[a] = permutation_importance(predict_fn, results[a]["preprocessor"], val_df)
         print(f"  [{a}] saved model_{a}.pt, preprocessor_{a}.pkl" + (" (winner)" if a == winner else ""))
 
     importance_out["winner"] = winner

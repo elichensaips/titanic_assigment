@@ -2,13 +2,19 @@
 Streamlit app for the Titanic survival classifier.
 
 Three things live here:
-  1. A model picker — train.py trains and saves every architecture (mlp,
-     deep_mlp, tab_transformer), not just the winner, so the user can choose
-     which one drives the two tabs below. Defaults to train.py's recommended
-     winner (lowest 5-fold CV validation loss).
+  1. A model picker — train.py trains and saves every PyTorch architecture
+     (mlp, deep_mlp, tab_transformer), and the optional, bonus
+     train_baselines.py additionally saves classical scikit-learn-API
+     baselines (Logistic Regression, KNN, Naive Bayes, SVM, Random Forest,
+     HistGradientBoosting, XGBoost, LightGBM, CatBoost). Every model found
+     in artifacts/ shows up here so the user can choose which one drives the
+     two tabs below. Defaults to whichever has the lowest 5-fold CV
+     validation loss overall. **The assignment's required deliverable is
+     train.py's PyTorch model** — the classical baselines are bonus context,
+     clearly labeled as such below.
   2. "Validation results"  - shows how the selected model performed on the
-     held-out validation split, the architecture comparison, and permutation
-     feature importance — all read straight from artifacts/.
+     held-out validation split, the full model comparison table, and
+     permutation feature importance — all read straight from artifacts/.
   3. "Run inference"       - lets the user point at any CSV with the Titanic
      schema, loads the selected model + preprocessor from disk, runs
      predictions, and (if the CSV has a Survived column) shows evaluation
@@ -40,7 +46,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src.architectures import make_model, predict_proba
+from src.architectures import ARCH_NAMES, make_model, predict_proba
 
 ARTIFACTS_DIR = Path("artifacts")
 DEVICE = torch.device("cpu")  # small model + tiny batches -> CPU is plenty for the app
@@ -51,16 +57,26 @@ st.set_page_config(page_title="Titanic Survival Classifier", layout="wide")
 # --------------------------------------------------------------------------
 # Cached loaders
 # --------------------------------------------------------------------------
+def is_pytorch(name: str) -> bool:
+    return name in ARCH_NAMES
+
+
 @st.cache_resource
-def load_model_and_preprocessor(artifacts_dir: Path, arch: str):
-    # preprocessor_<arch>.pkl deserializes to whichever class train.py pickled
-    # (TitanicPreprocessor for mlp/deep_mlp, TitanicTokenizer for tab_transformer)
-    with open(artifacts_dir / f"preprocessor_{arch}.pkl", "rb") as f:
+def load_model_and_preprocessor(artifacts_dir: Path, name: str):
+    if is_pytorch(name):
+        with open(artifacts_dir / f"preprocessor_{name}.pkl", "rb") as f:
+            preprocessor = pickle.load(f)
+        checkpoint = torch.load(artifacts_dir / f"model_{name}.pt", map_location="cpu")
+        model = make_model(name, checkpoint["arch_kwargs"])
+        model.load_state_dict(checkpoint["state_dict"])
+        model.eval()
+        return model, preprocessor
+    # Classical baseline: plain pickled sklearn-API estimator + one shared
+    # preprocessor (every baseline uses the same flat one-hot feature vector).
+    with open(artifacts_dir / f"model_{name}.pkl", "rb") as f:
+        model = pickle.load(f)
+    with open(artifacts_dir / "preprocessor_baselines.pkl", "rb") as f:
         preprocessor = pickle.load(f)
-    checkpoint = torch.load(artifacts_dir / f"model_{arch}.pt", map_location="cpu")
-    model = make_model(arch, checkpoint["arch_kwargs"])
-    model.load_state_dict(checkpoint["state_dict"])
-    model.eval()
     return model, preprocessor
 
 
@@ -73,16 +89,19 @@ def load_json(artifacts_dir: Path, name: str):
     return None
 
 
-def transform_for_inference(preprocessor, arch: str, df: pd.DataFrame):
-    if arch == "tab_transformer":
+def transform_for_inference(preprocessor, name: str, df: pd.DataFrame):
+    if name == "tab_transformer":
         num, cat, y = preprocessor.transform(df)
         return (torch.from_numpy(num), torch.from_numpy(cat)), y
     X, y = preprocessor.transform(df)
-    return torch.from_numpy(X), y
+    return (X if not is_pytorch(name) else torch.from_numpy(X)), y
 
 
-def predict(model, arch: str, features) -> tuple[np.ndarray, np.ndarray]:
-    probs = predict_proba(model, arch, features, DEVICE)
+def predict(model, name: str, features) -> tuple[np.ndarray, np.ndarray]:
+    if is_pytorch(name):
+        probs = predict_proba(model, name, features, DEVICE)
+    else:
+        probs = model.predict_proba(features)[:, 1]
     return probs, (probs > 0.5).astype(int)
 
 
@@ -120,39 +139,68 @@ def show_metrics_and_plots(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.n
 # --------------------------------------------------------------------------
 st.title("🚢 Titanic Survival Classifier")
 
-comparison = load_json(ARTIFACTS_DIR, "model_comparison.json")
-available_archs = [k for k, v in comparison.items() if isinstance(v, dict)] if comparison else []
-winner = comparison.get("winner") if comparison else None
+pytorch_comparison = load_json(ARTIFACTS_DIR, "model_comparison.json") or {}
+baseline_comparison = load_json(ARTIFACTS_DIR, "baseline_comparison.json") or {}
+comparison = {
+    **{k: v for k, v in pytorch_comparison.items() if isinstance(v, dict)},
+    **{k: v for k, v in baseline_comparison.items() if isinstance(v, dict)},
+}
+cv_folds = pytorch_comparison.get("cv_folds") or baseline_comparison.get("cv_folds")
 
-if not available_archs:
+if not comparison:
     st.error(
-        "No trained models found in `artifacts/`. Run `python train.py` first, "
+        "No trained models found in `artifacts/`. Run `python train.py` first "
+        "(and optionally `python train_baselines.py` for the classical baselines), "
         "then reload this app."
     )
     st.stop()
 
-available_archs = sorted(available_archs, key=lambda a: comparison[a]["cv_mean_val_loss"])
+available_names = sorted(comparison, key=lambda n: comparison[n]["cv_mean_val_loss"])
+# Default selection stays train.py's own PyTorch winner (the assignment's required
+# deliverable) even if a classical baseline scores lower CV loss overall — that
+# result is still fully visible in the table/dropdown, just not what auto-loads.
+pytorch_winner = pytorch_comparison.get("winner")
+overall_best = min(comparison, key=lambda n: comparison[n]["cv_mean_val_loss"])
+default_selection = pytorch_winner if pytorch_winner in comparison else overall_best
 
 
-def _label(a: str) -> str:
-    cv_acc = comparison[a]["cv_mean_val_acc"]
-    suffix = " ⭐ (recommended — lowest CV loss)" if a == winner else ""
-    return f"{a}  —  {cv_acc:.1%} CV accuracy{suffix}"
+def _label(name: str) -> str:
+    cv_acc = comparison[name]["cv_mean_val_acc"]
+    kind = "PyTorch" if is_pytorch(name) else "classical baseline"
+    tags = []
+    if name == pytorch_winner:
+        tags.append("⭐ required-model winner")
+    if name == overall_best and name != pytorch_winner:
+        tags.append("🏆 lowest CV loss overall")
+    suffix = f" ({', '.join(tags)})" if tags else ""
+    return f"{name}  —  {kind}  —  {cv_acc:.1%} CV accuracy{suffix}"
 
 
 arch = st.selectbox(
     "Model",
-    options=available_archs,
-    index=available_archs.index(winner) if winner in available_archs else 0,
+    options=available_names,
+    index=available_names.index(default_selection),
     format_func=_label,
-    help="train.py trains and saves every architecture; the ⭐ one has the lowest "
-    "5-fold cross-validation loss on the training split. Switch to compare them.",
+    help="train.py's mlp / deep_mlp / tab_transformer are the assignment's required "
+    "PyTorch deliverable (⭐ marks train.py's own winner, pre-selected by default); "
+    "any other names come from the optional, bonus train_baselines.py script. 🏆 marks "
+    "whichever model has the lowest CV loss across *all* of them, PyTorch or not.",
 )
+if not is_pytorch(arch):
+    st.info(
+        f"**{arch}** is a classical scikit-learn-API baseline from the bonus "
+        "`train_baselines.py` script, shown for comparison — the assignment's required "
+        "trained/saved model is always one of train.py's PyTorch architectures "
+        f"({', '.join(ARCH_NAMES)})."
+    )
 
 model, preprocessor = load_model_and_preprocessor(ARTIFACTS_DIR, arch)
 history = load_json(ARTIFACTS_DIR, "history.json")
-importance_all = load_json(ARTIFACTS_DIR, "feature_importance.json")
-importance = importance_all.get(arch) if importance_all else None
+importance_all = {
+    **(load_json(ARTIFACTS_DIR, "feature_importance.json") or {}),
+    **(load_json(ARTIFACTS_DIR, "baseline_feature_importance.json") or {}),
+}
+importance = importance_all.get(arch)
 
 tab_val, tab_infer = st.tabs(["📊 Validation results", "🔮 Run inference"])
 
@@ -162,7 +210,7 @@ with tab_val:
     st.caption(
         f"Showing **{arch}**. This is the held-out split `train.py` set aside before "
         "fitting any model (saved to `artifacts/val_split.csv`) — none of the "
-        "architectures trained on these rows."
+        "models trained on these rows."
     )
 
     val_path = ARTIFACTS_DIR / "val_split.csv"
@@ -174,31 +222,35 @@ with tab_val:
     else:
         st.warning("`artifacts/val_split.csv` not found — re-run train.py to generate it.")
 
-    if comparison:
-        cv_folds = comparison.get("cv_folds")
-        st.subheader("Architecture comparison")
-        st.caption(
-            f"Winner is chosen by lowest mean {cv_folds}-fold CV validation loss on the "
-            "training split (more robust than the single held-out split, which is small "
-            "enough that close architectures can flip rank from noise alone)."
-            if cv_folds
-            else "Winner is chosen by lowest validation loss."
+    st.subheader("Model comparison")
+    st.caption(
+        (
+            f"Ranked by lowest mean {cv_folds}-fold CV validation loss on the training split "
+            "(more robust than the single held-out split, which is small enough that close "
+            "models can flip rank from noise alone). 'kind' distinguishes the required PyTorch "
+            "models from the bonus classical baselines. Note: CV loss and CV accuracy don't "
+            "always agree — KNN and Naive Bayes tend to output poorly-calibrated probabilities "
+            "(confidently wrong more often than well-calibrated models), so they can rank much "
+            "worse by loss than their accuracy alone would suggest."
         )
-        comp_df = pd.DataFrame(
-            [
-                {
-                    "architecture": a,
-                    "cv_val_loss": v.get("cv_mean_val_loss"),
-                    "cv_val_loss_std": v.get("cv_std_val_loss"),
-                    "cv_val_accuracy": v.get("cv_mean_val_acc"),
-                    "held_out_val_loss": v["best_val_loss"],
-                    "held_out_val_accuracy": v["best_val_acc"],
-                }
-                for a, v in comparison.items()
-                if isinstance(v, dict)
-            ]
-        ).sort_values("cv_val_loss")
-        st.dataframe(comp_df, use_container_width=True, hide_index=True)
+        if cv_folds
+        else "Ranked by lowest validation loss."
+    )
+    comp_df = pd.DataFrame(
+        [
+            {
+                "model": a,
+                "kind": "PyTorch" if is_pytorch(a) else "classical baseline",
+                "cv_val_loss": v.get("cv_mean_val_loss"),
+                "cv_val_loss_std": v.get("cv_std_val_loss"),
+                "cv_val_accuracy": v.get("cv_mean_val_acc"),
+                "held_out_val_loss": v["best_val_loss"],
+                "held_out_val_accuracy": v["best_val_acc"],
+            }
+            for a, v in comparison.items()
+        ]
+    ).sort_values("cv_val_loss")
+    st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
     if importance:
         st.subheader(f"Feature importance (permutation, {arch})")
@@ -229,6 +281,8 @@ with tab_val:
         ax2.set_xlabel("Epoch")
         ax2.legend()
         st.pyplot(fig)
+    elif not is_pytorch(arch):
+        st.caption("(No per-epoch training curve for classical baselines — they aren't trained iteratively like a neural net.)")
 
 # ---- Tab 2: user-supplied CSV -----------------------------------------------
 with tab_infer:

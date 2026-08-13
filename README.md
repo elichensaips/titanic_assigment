@@ -23,12 +23,14 @@ PyTorch training script → Streamlit evaluation/inference app) on the
 │   ├── architectures.py      # registry: arch name -> preprocessor/model/forward
 │   └── importance.py         # permutation feature importance (model-agnostic)
 ├── train.py                  # standalone training + architecture-comparison script
-├── ds_app.py                 # Streamlit app: validation results + inference UI
+├── train_baselines.py        # bonus, non-graded: classical scikit-learn-API baselines
+├── ds_app.py                 # Streamlit app: model picker + validation results + inference UI
 ├── requirements.txt
-└── artifacts/                 # created by train.py (gitignored): model_<arch>.pt,
-                                # preprocessor_<arch>.pkl per architecture, plus
-                                # val_split.csv, history.json, model_comparison.json,
-                                # feature_importance.json
+└── artifacts/                 # created by train.py/train_baselines.py (gitignored):
+                                # model_<name>.pt|.pkl + preprocessor_<name>.pkl per
+                                # model, val_split.csv, history.json,
+                                # model_comparison.json / baseline_comparison.json,
+                                # feature_importance.json / baseline_feature_importance.json
 ```
 
 **Why a shared preprocessor.** The exact same feature engineering and fitted
@@ -128,14 +130,19 @@ needed — which matters here since the winner can be the MLP or the
 Transformer depending on the run.
 
 **Benchmarking against classic SOTA baselines.**
-`notebooks/model_benchmark.ipynb` is a bonus, non-graded notebook that
-trains a broad spread of classic baselines — Logistic Regression, KNN,
-Naive Bayes, SVM, Random Forest, HistGradientBoosting, XGBoost, LightGBM,
-and CatBoost — on the *same* train/val split, feature engineering, and
-5-fold CV as `train.py`, for context on how the PyTorch models compare to
-strong (and not-so-strong) classical tabular baselines. It is not part of
-the required deliverable — `train.py`'s saved model is always one of the
-three PyTorch architectures above.
+`notebooks/model_benchmark.ipynb` (interactive, with plots/discussion) and
+`train_baselines.py` (standalone script that persists the models as
+artifacts) both train a broad spread of classic baselines — Logistic
+Regression, KNN, Naive Bayes, SVM, Random Forest, HistGradientBoosting,
+XGBoost, LightGBM, and CatBoost — on the *same* train/val split, feature
+engineering, and 5-fold CV as `train.py`, for context on how the PyTorch
+models compare to strong (and not-so-strong) classical tabular baselines.
+**Both are bonus and non-graded** — the assignment's required deliverable
+is `train.py`'s PyTorch model, which is always one of `mlp` / `deep_mlp` /
+`tab_transformer`. Run `python train_baselines.py` (after `train.py`) and
+`ds_app.py`'s model picker will show every baseline alongside the PyTorch
+architectures, clearly labeled by kind, with the PyTorch winner still
+pre-selected by default regardless of whether a baseline scores lower.
 
 ## Setup
 
@@ -178,23 +185,37 @@ metadata) and `artifacts/preprocessor_<arch>.pkl`, plus the shared
 `artifacts/val_split.csv`, `artifacts/history.json`,
 `artifacts/model_comparison.json`, and `artifacts/feature_importance.json`.
 
-**2. Launch the app:**
+**2. (Optional, bonus) Train the classical baselines:**
+```bash
+python train_baselines.py
+```
+Trains Logistic Regression, KNN, Naive Bayes, SVM, Random Forest,
+HistGradientBoosting, XGBoost, LightGBM, and CatBoost on the identical
+split, and writes `artifacts/model_<name>.pkl` per baseline, a shared
+`artifacts/preprocessor_baselines.pkl`, `artifacts/baseline_comparison.json`,
+and `artifacts/baseline_feature_importance.json`. Skip this step and
+everything still works — the app just won't show the baselines.
+
+**3. Launch the app:**
 ```bash
 streamlit run ds_app.py
 ```
-- **Model picker** — a dropdown above the tabs lets you choose which trained
-  architecture (`mlp` / `deep_mlp` / `tab_transformer`) drives both tabs
-  below, labeled with each one's CV accuracy; the ⭐ option is train.py's
-  recommended winner (lowest CV loss), pre-selected by default.
+- **Model picker** — a dropdown above the tabs lists every model found in
+  `artifacts/` (the 3 required PyTorch architectures, plus any classical
+  baselines from step 2), labeled with kind and CV accuracy. ⭐ marks
+  `train.py`'s own PyTorch winner (lowest CV loss among `mlp` / `deep_mlp` /
+  `tab_transformer`) and is pre-selected by default; 🏆 marks whichever
+  model has the lowest CV loss overall, if that's a different (baseline) model.
 - **Validation results tab** — metrics/plots on the held-out split for the
-  selected model, the architecture comparison table, permutation feature
-  importance, and training curves, read straight from `artifacts/`.
+  selected model, the full model comparison table, permutation feature
+  importance, and training curves (PyTorch models only — classical
+  baselines aren't trained iteratively), read straight from `artifacts/`.
 - **Run inference tab** — point at any CSV with the Titanic schema (a file
   path or an upload) and run it through the selected model. If the CSV has
   a `Survived` column, evaluation plots are shown too; otherwise you just
   get predictions + a download button. Try it against `data/sample_train.csv`.
 
-**3. Explore the notebooks:**
+**4. Explore the notebooks:**
 ```bash
 jupyter notebook notebooks/eda.ipynb              # exploratory data analysis
 jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparison
@@ -243,9 +264,25 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
   features too, agreeing with the model-based importance despite being a
   completely different method — consistent with the "women, children, and
   travel-party fate" signal both identify.
-- App: `streamlit run ds_app.py` → opens at `http://localhost:8501` with
+- Baselines: `python train_baselines.py` → verified run, ranked by 5-fold CV
+  loss (lower is better): **CatBoost 0.377** (lowest overall), Logistic
+  Regression 0.398, SVM 0.423, LightGBM 0.429, HistGradientBoosting 0.430 —
+  all five beat every PyTorch architecture's CV loss (`mlp` 0.482,
+  `tab_transformer` 0.484, `deep_mlp` 0.495) — then XGBoost 0.483, Random
+  Forest 0.700, and KNN (1.97) / Naive Bayes (2.11) far behind. That last
+  pair's *accuracy* is respectable (81.5% / 78.8%) despite the terrible
+  loss — both output poorly-calibrated probabilities (confidently wrong
+  more often than they should be), which log loss punishes hard but plain
+  accuracy doesn't notice. In `ds_app.py`, `mlp` still loads by default
+  (it's `train.py`'s own PyTorch winner, the required deliverable) even
+  though CatBoost scores lower CV loss overall — that result is fully
+  visible in the app's comparison table and selectable, just not what
+  auto-loads.
+- App: `streamlit run ds_app.py` → opens at `http://localhost:8501` with a
+  model picker (12 models once both training scripts have been run) plus
   the two tabs described above. Verified end-to-end against
-  `data/sample_train.csv` (84% accuracy on that 50-row sample).
+  `data/sample_train.csv` for every model (84-94% accuracy on that 50-row
+  sample, depending on which model is selected).
 
 (Add screenshots of the running app here.)
 
