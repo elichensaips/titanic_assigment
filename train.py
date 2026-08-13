@@ -46,6 +46,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.architectures import ARCH_NAMES, forward, make_model, make_preprocessor
+from src.data import load_train_csv
 from src.importance import permutation_importance, torch_predict_fn
 
 SEED = 42
@@ -248,7 +249,7 @@ def main() -> None:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- Load & split -----------------------------------------------------
-    df = pd.read_csv(args.data)
+    df = load_train_csv(args.data)
     print(f"Loaded {len(df)} rows from {args.data}")
 
     train_df, val_df = train_test_split(

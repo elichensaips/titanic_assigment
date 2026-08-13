@@ -42,6 +42,7 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 
+from src.data import load_train_csv
 from src.importance import permutation_importance, sklearn_predict_fn
 from src.preprocessing import TitanicPreprocessor
 
@@ -93,7 +94,7 @@ def main() -> None:
     artifacts_dir = Path(args.artifacts_dir)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(args.data)
+    df = load_train_csv(args.data)
     train_df, val_df = train_test_split(
         df, test_size=args.val_size, random_state=args.seed, stratify=df["Survived"]
     )
