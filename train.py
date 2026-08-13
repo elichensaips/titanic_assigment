@@ -5,7 +5,15 @@ Loads data/train.csv, creates a train/validation split, fits the
 preprocessing pipeline on the training split only, trains and compares
 several PyTorch architectures (a small MLP, a deeper MLP, and a small
 tabular Transformer), and saves everything needed for inference to
-artifacts/:
+artifacts/.
+
+Architecture selection uses stratified K-fold cross-validation on the
+training split (not the single held-out val split) — with only ~700 rows,
+a single 80/20 split is noisy enough that two close architectures can flip
+rank from one split to another. The held-out val split is still what gets
+reported/saved for the winner (that's the assignment's required
+train/validation evaluation split), CV is just a more robust tie-breaker
+for *which* architecture to trust.
 
     artifacts/model.pt              - best-performing model's weights + arch metadata
     artifacts/preprocessor.pkl      - the (matching) fitted preprocessor/tokenizer
@@ -30,7 +38,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -62,6 +70,12 @@ def parse_args() -> argparse.Namespace:
         default=",".join(ARCH_NAMES),
         help=f"Comma-separated architectures to train and compare, from {ARCH_NAMES}",
     )
+    p.add_argument(
+        "--cv-folds",
+        type=int,
+        default=5,
+        help="Stratified K-fold CV on the training split, used to pick the winning architecture",
+    )
     return p.parse_args()
 
 
@@ -91,7 +105,7 @@ def unpack_batch(arch: str, batch, device):
     return xb.to(device), yb.to(device)
 
 
-def run_training(arch, model, train_loader, val_loader, device, args, pos_weight):
+def run_training(arch, model, train_loader, val_loader, device, args, pos_weight, verbose=True):
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -136,7 +150,7 @@ def run_training(arch, model, train_loader, val_loader, device, args, pos_weight
         history["train_acc"].append(train_acc)
         history["val_acc"].append(val_acc)
 
-        if epoch == 1 or epoch % 10 == 0 or epoch == args.epochs:
+        if verbose and (epoch == 1 or epoch % 10 == 0 or epoch == args.epochs):
             print(
                 f"  [{arch}] epoch {epoch:3d}/{args.epochs} | "
                 f"train_loss={train_loss:.4f} train_acc={train_acc:.3f} | "
@@ -151,10 +165,69 @@ def run_training(arch, model, train_loader, val_loader, device, args, pos_weight
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= args.patience:
-                print(f"  [{arch}] early stopping at epoch {epoch} (no improvement for {args.patience} epochs)")
+                if verbose:
+                    print(f"  [{arch}] early stopping at epoch {epoch} (no improvement for {args.patience} epochs)")
                 break
 
     return best_state, best_val_loss, best_val_acc, history
+
+
+def make_features(arch, preprocessor, df, fit: bool):
+    """Fit or transform `df` with the right preprocessor call for `arch`,
+    returning (features, y, meta) where `features` is an ndarray for
+    mlp/deep_mlp or an (x_num, x_cat) ndarray pair for tab_transformer."""
+    if arch == "tab_transformer":
+        if fit:
+            num, cat, y = preprocessor.fit_transform(df)
+            meta = {"n_numeric": num.shape[1], "cat_cardinalities": preprocessor.cardinalities}
+        else:
+            num, cat, y = preprocessor.transform(df)
+            meta = None
+        return (num, cat), y, meta
+    if fit:
+        X, y = preprocessor.fit_transform(df)
+        meta = {"n_features": X.shape[1]}
+    else:
+        X, y = preprocessor.transform(df)
+        meta = None
+    return X, y, meta
+
+
+def cross_validate(arch: str, train_df: pd.DataFrame, args, device) -> dict:
+    """Stratified K-fold CV on the training split only (never touches
+    val_df), used purely to pick a winning architecture more robustly than
+    a single noisy 80/20 split would."""
+    skf = StratifiedKFold(n_splits=args.cv_folds, shuffle=True, random_state=args.seed)
+    fold_losses, fold_accs = [], []
+
+    for fold_idx, (tr_idx, va_idx) in enumerate(skf.split(train_df, train_df["Survived"]), start=1):
+        set_seed(args.seed + fold_idx)
+        fold_train = train_df.iloc[tr_idx]
+        fold_val = train_df.iloc[va_idx]
+
+        preprocessor = make_preprocessor(arch)
+        train_feats, y_train, meta = make_features(arch, preprocessor, fold_train, fit=True)
+        val_feats, y_val, _ = make_features(arch, preprocessor, fold_val, fit=False)
+
+        train_loader, val_loader = build_loaders(arch, train_feats, y_train, val_feats, y_val, args.batch_size)
+        model = make_model(arch, meta).to(device)
+        pos_weight = torch.tensor(
+            [(y_train == 0).sum() / max((y_train == 1).sum(), 1)], dtype=torch.float32
+        ).to(device)
+
+        _, fold_val_loss, fold_val_acc, _ = run_training(
+            arch, model, train_loader, val_loader, device, args, pos_weight, verbose=False
+        )
+        fold_losses.append(fold_val_loss)
+        fold_accs.append(fold_val_acc)
+        print(f"  [{arch}] fold {fold_idx}/{args.cv_folds}: val_loss={fold_val_loss:.4f} val_acc={fold_val_acc:.3f}")
+
+    return {
+        "cv_mean_val_loss": float(np.mean(fold_losses)),
+        "cv_std_val_loss": float(np.std(fold_losses)),
+        "cv_mean_val_acc": float(np.mean(fold_accs)),
+        "cv_std_val_acc": float(np.std(fold_accs)),
+    }
 
 
 def main() -> None:
@@ -184,20 +257,20 @@ def main() -> None:
     results = {}
 
     for arch in archs:
-        print(f"\n=== Training '{arch}' ===")
+        print(f"\n=== Architecture '{arch}' ===")
+        print(f"  Running {args.cv_folds}-fold stratified CV on the training split...")
+        cv_stats = cross_validate(arch, train_df, args, device)
+        print(
+            f"  [{arch}] CV: val_loss={cv_stats['cv_mean_val_loss']:.4f}+/-{cv_stats['cv_std_val_loss']:.4f} "
+            f"val_acc={cv_stats['cv_mean_val_acc']:.3f}+/-{cv_stats['cv_std_val_acc']:.3f}"
+        )
+
+        print(f"  Training on the full train/val split for final artifacts...")
         set_seed(args.seed)  # identical init/shuffling across architectures for a fair comparison
 
         preprocessor = make_preprocessor(arch)
-        if arch == "tab_transformer":
-            num_train, cat_train, y_train = preprocessor.fit_transform(train_df)
-            num_val, cat_val, y_val = preprocessor.transform(val_df)
-            meta = {"n_numeric": num_train.shape[1], "cat_cardinalities": preprocessor.cardinalities}
-            train_feats, val_feats = (num_train, cat_train), (num_val, cat_val)
-        else:
-            X_train, y_train = preprocessor.fit_transform(train_df)
-            X_val, y_val = preprocessor.transform(val_df)
-            meta = {"n_features": X_train.shape[1]}
-            train_feats, val_feats = X_train, X_val
+        train_feats, y_train, meta = make_features(arch, preprocessor, train_df, fit=True)
+        val_feats, y_val, _ = make_features(arch, preprocessor, val_df, fit=False)
 
         train_loader, val_loader = build_loaders(arch, train_feats, y_train, val_feats, y_val, args.batch_size)
 
@@ -217,13 +290,18 @@ def main() -> None:
             "history": history,
             "meta": meta,
             "preprocessor": preprocessor,
+            **cv_stats,
         }
-        print(f"  [{arch}] best val_loss={best_val_loss:.4f} val_acc={best_val_acc:.3f}")
+        print(f"  [{arch}] held-out split: val_loss={best_val_loss:.4f} val_acc={best_val_acc:.3f}")
 
-    # ---- Pick winner (lowest validation loss) ------------------------------
-    winner = min(results, key=lambda a: results[a]["best_val_loss"])
-    print(f"\nWinning architecture: '{winner}' (val_loss={results[winner]['best_val_loss']:.4f}, "
-          f"val_acc={results[winner]['best_val_acc']:.3f})")
+    # ---- Pick winner by CV mean val loss (more robust than the single,
+    # noisy 80/20 held-out split) ------------------------------------------
+    winner = min(results, key=lambda a: results[a]["cv_mean_val_loss"])
+    print(
+        f"\nWinning architecture (lowest {args.cv_folds}-fold CV val loss): '{winner}' "
+        f"(cv_val_loss={results[winner]['cv_mean_val_loss']:.4f}+/-{results[winner]['cv_std_val_loss']:.4f}, "
+        f"held-out val_acc={results[winner]['best_val_acc']:.3f})"
+    )
 
     winner_model = make_model(winner, results[winner]["meta"]).to(device)
     winner_model.load_state_dict(results[winner]["best_state"])
@@ -244,10 +322,18 @@ def main() -> None:
         json.dump(history_out, f, indent=2)
 
     comparison = {
-        a: {"best_val_loss": results[a]["best_val_loss"], "best_val_acc": results[a]["best_val_acc"]}
+        a: {
+            "best_val_loss": results[a]["best_val_loss"],
+            "best_val_acc": results[a]["best_val_acc"],
+            "cv_mean_val_loss": results[a]["cv_mean_val_loss"],
+            "cv_std_val_loss": results[a]["cv_std_val_loss"],
+            "cv_mean_val_acc": results[a]["cv_mean_val_acc"],
+            "cv_std_val_acc": results[a]["cv_std_val_acc"],
+        }
         for a in results
     }
     comparison["winner"] = winner
+    comparison["cv_folds"] = args.cv_folds
     with open(artifacts_dir / "model_comparison.json", "w") as f:
         json.dump(comparison, f, indent=2)
 

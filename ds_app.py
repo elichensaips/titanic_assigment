@@ -136,10 +136,11 @@ tab_val, tab_infer = st.tabs(["📊 Validation results", "🔮 Run inference"])
 # ---- Tab 1: results on the held-out split from train.py -------------------
 with tab_val:
     st.subheader("Performance on the held-out validation split")
+    arch_names = [k for k, v in comparison.items() if isinstance(v, dict)] if comparison else None
     st.caption(
         f"Winning architecture: **{arch}** (selected by train.py out of "
-        f"{', '.join(comparison.keys() - {'winner'}) if comparison else 'mlp / deep_mlp / tab_transformer'} "
-        "on lowest validation loss). This is the split `train.py` set aside before "
+        f"{', '.join(arch_names) if arch_names else 'mlp / deep_mlp / tab_transformer'} "
+        "via cross-validation). This is the held-out split `train.py` set aside before "
         "fitting any model (saved to `artifacts/val_split.csv`) — none of them trained on these rows."
     )
 
@@ -153,14 +154,29 @@ with tab_val:
         st.warning("`artifacts/val_split.csv` not found — re-run train.py to generate it.")
 
     if comparison:
+        cv_folds = comparison.get("cv_folds")
         st.subheader("Architecture comparison")
+        st.caption(
+            f"Winner is chosen by lowest mean {cv_folds}-fold CV validation loss on the "
+            "training split (more robust than the single held-out split, which is small "
+            "enough that close architectures can flip rank from noise alone)."
+            if cv_folds
+            else "Winner is chosen by lowest validation loss."
+        )
         comp_df = pd.DataFrame(
             [
-                {"architecture": a, "val_loss": v["best_val_loss"], "val_accuracy": v["best_val_acc"]}
+                {
+                    "architecture": a,
+                    "cv_val_loss": v.get("cv_mean_val_loss"),
+                    "cv_val_loss_std": v.get("cv_std_val_loss"),
+                    "cv_val_accuracy": v.get("cv_mean_val_acc"),
+                    "held_out_val_loss": v["best_val_loss"],
+                    "held_out_val_accuracy": v["best_val_acc"],
+                }
                 for a, v in comparison.items()
-                if a != "winner"
+                if isinstance(v, dict)
             ]
-        ).sort_values("val_loss")
+        ).sort_values("cv_val_loss")
         st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
     if importance:

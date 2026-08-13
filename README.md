@@ -66,9 +66,8 @@ each choice):
 - Everything is **fit only on the training split** to avoid leakage into
   validation.
 
-**Models — three PyTorch architectures, compared automatically.**
-`train.py` trains all three on the identical split and keeps the one with
-the lowest validation loss:
+**Models — three PyTorch architectures, compared via cross-validation.**
+`train.py` trains all three:
 - `mlp` — small 2-hidden-layer MLP (32→16 units, ReLU, dropout 0.3).
 - `deep_mlp` — a deeper variant (64→32→16 units) for more capacity.
 - `tab_transformer` — a small FT-Transformer-style network
@@ -84,11 +83,23 @@ All three are trained with `BCEWithLogitsLoss` using a `pos_weight` to
 correct for the ~62/38 class imbalance, Adam with weight decay, and early
 stopping on validation loss.
 
+**Why cross-validation for architecture selection.** With only ~700
+training rows, a single 80/20 split is noisy enough that two close
+architectures can flip rank depending on which rows happen to land in
+validation — early iterations of this project picked a "winner" by a
+val-loss margin of 0.004, which is noise, not signal. `train.py` now runs
+**5-fold stratified cross-validation on the training split** (`--cv-folds`,
+default 5) for each architecture and picks the one with the lowest mean CV
+validation loss. The single held-out split (below) is still what's kept
+untouched throughout — CV only ever sees the training portion — and is what
+gets reported as the final, assignment-required validation metric.
+
 **Evaluation.** `train.py` holds out a stratified validation split
-(`--val-size`, default 20%) *before* fitting anything, and saves it to
-`artifacts/val_split.csv` so the Streamlit app can score the trained model
-on data it never saw. It also saves `artifacts/model_comparison.json` (final
-val loss/accuracy for every architecture tried) and
+(`--val-size`, default 20%) *before* fitting or cross-validating anything,
+and saves it to `artifacts/val_split.csv` so the Streamlit app can score the
+trained model on data it never saw. It also saves
+`artifacts/model_comparison.json` (both the CV mean±std and the held-out
+split's loss/accuracy, for every architecture tried) and
 `artifacts/feature_importance.json` (permutation importance of the winner —
 see below). The app reports accuracy/precision/recall/F1, a confusion
 matrix, an ROC curve, the architecture comparison table, a feature
@@ -171,15 +182,25 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
 
 ## Example usage
 
-- Train: `python train.py` → trains `mlp`, `deep_mlp`, and `tab_transformer`
-  back-to-back and prints each one's per-epoch progress plus a final
-  comparison. Verified run on the full Kaggle `train.csv` (712 train / 179
-  validation rows): `mlp` 78.8% val accuracy, `deep_mlp` 80.4%,
-  `tab_transformer` 80.4% (lowest val loss, 0.5628 → selected as the winner).
-- Benchmark notebook: on the identical split, Logistic Regression reached
-  81.0% and XGBoost 82.7% — in the same band as the PyTorch models, which is
-  the expected result for a dataset this small (see the notebook's
-  takeaways for discussion).
+- Train: `python train.py` → for each architecture, runs 5-fold CV on the
+  training split, then trains once more on the full train/val split for the
+  final artifacts. Verified run on the full Kaggle `train.csv` (712 train /
+  179 validation rows):
+
+| architecture | 5-fold CV accuracy | held-out split accuracy |
+|---|---|---|
+| `mlp` | 83.2% ± 3.1% | 78.8% |
+| `deep_mlp` | 83.3% ± 2.7% | 80.4% |
+| `tab_transformer` | **85.1% ± 1.8%** (winner) | 80.4% |
+
+  `tab_transformer` wins clearly on CV (lowest mean loss, 0.4841) — a much
+  more confident margin than the single held-out split alone would suggest,
+  which is exactly why CV was added for architecture selection.
+- Benchmark notebook: on the same 5-fold CV, the strongest classical
+  baseline was HistGradientBoosting at 83.3% — in the same band as the
+  PyTorch MLPs, with the PyTorch `tab_transformer` ahead of all of them on
+  this run (see the notebook's takeaways for discussion, including why its
+  CV std is wider than the tree-based baselines').
 - Top permutation-importance features for the winning model: `Title`, `Sex`,
   `Pclass`, `FamilySize`, `GroupSurvivalRate` — consistent with the
   "women, children, and travel-party fate" signal the EDA notebook
