@@ -51,7 +51,11 @@ each choice):
 - `HasCabin` / `Deck` — a presence flag plus the cabin letter, rather than
   the raw (77%-missing) `Cabin` string. The single-passenger `"T"` deck is
   folded into `"A"` (its closest real analog) so it isn't a near-unique
-  one-hot column that's pure noise for the model.
+  one-hot column that's pure noise for the model. A missing-cabin passenger's
+  `Deck` is also recovered from a ticket-mate whose cabin *is* known before
+  falling back to `"U"` (people sharing a ticket typically shared a cabin) —
+  a small effect (11 of 891 rows) but free and leakage-safe, since it only
+  ever looks at `Ticket`/`Cabin` within whichever rows are being processed.
 - `TicketGroupSize` / `FarePerPerson` — people sharing a ticket number are a
   travel party; the raw `Fare` is the *party's* fare, so dividing by party
   size gives a per-person price comparable across parties.
@@ -195,15 +199,15 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
 - Train: `python train.py` → for each architecture, runs 5-fold CV on the
   training split, then trains once more on the full train/val split for the
   final artifacts. Verified run on the full Kaggle `train.csv` (712 train /
-  179 validation rows), after adding Title-based Age imputation and the
-  Deck T→A merge (both measurably improved every model's CV accuracy vs. the
-  previous run):
+  179 validation rows), after Title-based Age imputation, the Deck T→A
+  merge, and Deck ticket-mate recovery (all measurably improved every
+  model's CV accuracy vs. the original global-median-imputation run):
 
 | architecture | 5-fold CV accuracy | CV val loss | held-out split accuracy |
 |---|---|---|---|
-| `mlp` | 84.0% ± 2.5% | **0.4783** (winner) | 78.2% |
-| `deep_mlp` | 84.3% ± 2.5% | 0.4942 | 80.4% |
-| `tab_transformer` | **85.4% ± 1.9%** (highest accuracy) | 0.4822 | 79.9% |
+| `mlp` | 84.0% ± 2.4% | **0.4819** (winner) | 78.2% |
+| `deep_mlp` | 84.1% ± 2.5% | 0.4945 | 79.9% |
+| `tab_transformer` | **85.7% ± 1.7%** (highest accuracy) | 0.4841 | 79.9% |
 
   `train.py` picks the winner by lowest mean **CV loss**, not highest CV
   accuracy — loss reflects prediction confidence/calibration, not just which
@@ -213,17 +217,20 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
   notebook's takeaways for why this is a deliberate, principled choice
   rather than a quirk.
 - Benchmark notebook: on the same 5-fold CV, the strongest classical
-  baseline was **CatBoost at 84.0%** — essentially tied with the winning
-  `mlp` (83.9%). Logistic Regression, a simple linear baseline, reached
-  83.2%; XGBoost trailed the whole pack at 80.9% despite its reputation —
-  with a dataset this small, boosting-library defaults don't automatically
-  translate into a win. See the notebook's takeaways for the full ranking
-  and discussion.
+  baseline was **CatBoost at 84.6%** — between the winning `mlp`/`deep_mlp`
+  (~84%) and `tab_transformer` (85.7%). Logistic Regression and Random
+  Forest, simpler baselines, reached ~83% each; XGBoost trailed the whole
+  pack at 81.0% despite its reputation — with a dataset this small,
+  boosting-library defaults don't automatically translate into a win. See
+  the notebook's takeaways for the full ranking and discussion.
 - Top permutation-importance features for the winning model: `Title`, `Sex`,
   `FamilySize`, `Age`, `GroupSurvivalRate` — `Age` now shows up in the top 5
-  (it didn't before the Title-based imputation fix), consistent with the
-  "women, children, and travel-party fate" signal the EDA notebook
-  identifies.
+  (it didn't before the Title-based imputation fix). `eda.ipynb`'s Cramér's V
+  analysis (Section 5b — a model-free, purely statistical association
+  measure) independently ranks `Title`/`Sex` highest among categorical
+  features too, agreeing with the model-based importance despite being a
+  completely different method — consistent with the "women, children, and
+  travel-party fate" signal both identify.
 - App: `streamlit run ds_app.py` → opens at `http://localhost:8501` with
   the two tabs described above. Verified end-to-end against
   `data/sample_train.csv` (84% accuracy on that 50-row sample).

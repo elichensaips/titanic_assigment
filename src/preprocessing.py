@@ -74,6 +74,17 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["HasCabin"] = df["Cabin"].notna().map({True: "Yes", False: "No"})
     df["Deck"] = df["Cabin"].str[0].fillna("U").replace(_DECK_MAP)
 
+    # Recover Deck for a passenger with no recorded Cabin if a ticket-mate
+    # (same Ticket number) *does* have one — people sharing a ticket
+    # typically shared a cabin. This only ever looks at Ticket/Cabin within
+    # whatever rows are being processed (never the target), so it's the
+    # same operation at train, val, and inference time — no leakage, just
+    # like TicketGroupSize/FarePerPerson below. Doesn't touch HasCabin,
+    # which still reflects whether *this* passenger's own cabin was recorded.
+    known_deck_by_ticket = df.loc[df["Deck"] != "U"].groupby("Ticket")["Deck"].first()
+    recovered_deck = df["Ticket"].map(known_deck_by_ticket)
+    df["Deck"] = df["Deck"].where(df["Deck"] != "U", recovered_deck).fillna("U")
+
     # People traveling on the same ticket number are a travel party (family,
     # servants, friends) — the raw fare on a ticket is the party's *total*
     # fare, so dividing by party size gives a per-person price that's
