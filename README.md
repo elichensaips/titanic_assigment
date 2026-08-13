@@ -355,6 +355,13 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
 
 ### Screenshots
 
+*Reminder, since it comes up in these screenshots: `train.py`'s own pick
+(lowest CV loss among the 3 required PyTorch architectures) is `mlp`, but
+the app's default selection — what loads first, shown below — is
+`tab_transformer`, because it has the highest CV accuracy of all 12 models.
+Both are intentional, separate picks (📌 vs. ⭐ in the model picker), not a
+contradiction — see "Models" above for the full reasoning.*
+
 **Model picker — every model, labeled by kind and CV accuracy**
 ![Model picker dropdown open, showing all 12 models with their kind and CV accuracy](docs/screenshots/01_model_picker.jpg)
 
