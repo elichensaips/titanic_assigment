@@ -128,12 +128,13 @@ Transformer depending on the run.
 
 **Benchmarking against classic SOTA baselines.**
 `notebooks/model_benchmark.ipynb` is a bonus, non-graded notebook that
-trains Logistic Regression, Random Forest, HistGradientBoosting, XGBoost,
-LightGBM, and CatBoost on the *same* train/val split, feature engineering,
-and 5-fold CV as `train.py`, for context on how the PyTorch models compare
-to strong classical tabular baselines. It is not part of the required
-deliverable — `train.py`'s saved model is always one of the three PyTorch
-architectures above.
+trains a broad spread of classic baselines — Logistic Regression, KNN,
+Naive Bayes, SVM, Random Forest, HistGradientBoosting, XGBoost, LightGBM,
+and CatBoost — on the *same* train/val split, feature engineering, and
+5-fold CV as `train.py`, for context on how the PyTorch models compare to
+strong (and not-so-strong) classical tabular baselines. It is not part of
+the required deliverable — `train.py`'s saved model is always one of the
+three PyTorch architectures above.
 
 ## Setup
 
@@ -218,11 +219,17 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
   rather than a quirk.
 - Benchmark notebook: on the same 5-fold CV, the strongest classical
   baseline was **CatBoost at 84.6%** — between the winning `mlp`/`deep_mlp`
-  (~84%) and `tab_transformer` (85.7%). Logistic Regression and Random
-  Forest, simpler baselines, reached ~83% each; XGBoost trailed the whole
-  pack at 81.0% despite its reputation — with a dataset this small,
-  boosting-library defaults don't automatically translate into a win. See
-  the notebook's takeaways for the full ranking and discussion.
+  (~84%) and `tab_transformer` (85.7%). SVM, Random Forest, and Logistic
+  Regression form a tight middle tier (~83%); KNN (82.6%) and XGBoost
+  (81.0%) trail further; **Naive Bayes is weakest (79.1%)** — its
+  feature-independence assumption doesn't hold well here since several
+  engineered features are deliberately correlated by construction (e.g.
+  `Fare`/`FarePerPerson`/`Pclass`). For reference, a well-known public
+  Titanic tutorial (KNN/DecisionTree/RandomForest/NaiveBayes/SVM with
+  hand-binned features) reports 83.5% via SVM as its best score — on our
+  feature engineering, SVM lands similarly (83.3%), but CatBoost and every
+  PyTorch architecture here beat it. See the notebook's takeaways for the
+  full ranking and discussion.
 - Top permutation-importance features for the winning model: `Title`, `Sex`,
   `FamilySize`, `Age`, `GroupSurvivalRate` — `Age` now shows up in the top 5
   (it didn't before the Title-based imputation fix). `eda.ipynb`'s Cramér's V
