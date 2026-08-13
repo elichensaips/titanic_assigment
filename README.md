@@ -49,7 +49,9 @@ each choice):
 - `FamilySize = SibSp + Parch + 1`, `IsAlone` — survival is non-monotonic in
   raw `SibSp`/`Parch` but has a cleaner U-shape in total family size.
 - `HasCabin` / `Deck` — a presence flag plus the cabin letter, rather than
-  the raw (77%-missing) `Cabin` string.
+  the raw (77%-missing) `Cabin` string. The single-passenger `"T"` deck is
+  folded into `"A"` (its closest real analog) so it isn't a near-unique
+  one-hot column that's pure noise for the model.
 - `TicketGroupSize` / `FarePerPerson` — people sharing a ticket number are a
   travel party; the raw `Fare` is the *party's* fare, so dividing by party
   size gives a per-person price comparable across parties.
@@ -60,6 +62,13 @@ each choice):
   (excluding its own label), and validation/inference rows look up their
   group's train-derived rate, falling back to the global training rate for
   unseen groups (`src/preprocessing.py::_GroupSurvivalEncoder`).
+- **Age imputation by Title, not one global median.** ~20% of `Age` is
+  missing, and age varies hugely by `Title` (`Master` ≈ 3.5 vs. `Mr` ≈ 30 vs.
+  a single dataset-wide median of 28 for everyone) — imputing with the
+  global median badly distorts exactly the rows where `Title` already tells
+  us a lot about age. `_TitleAgeImputer` fits per-Title medians on the
+  training split only and falls back to the training set's global median
+  for any unseen Title (`src/preprocessing.py::_TitleAgeImputer`).
 - `PassengerId`, `Name`, `Ticket`, and raw `Cabin` are dropped as either
   identifiers or too sparse to use directly (after being mined for the
   features above).
@@ -186,28 +195,33 @@ jupyter notebook notebooks/model_benchmark.ipynb  # bonus SOTA baseline comparis
 - Train: `python train.py` → for each architecture, runs 5-fold CV on the
   training split, then trains once more on the full train/val split for the
   final artifacts. Verified run on the full Kaggle `train.csv` (712 train /
-  179 validation rows):
+  179 validation rows), after adding Title-based Age imputation and the
+  Deck T→A merge (both measurably improved every model's CV accuracy vs. the
+  previous run):
 
-| architecture | 5-fold CV accuracy | held-out split accuracy |
-|---|---|---|
-| `mlp` | 83.2% ± 3.1% | 78.8% |
-| `deep_mlp` | 83.3% ± 2.7% | 80.4% |
-| `tab_transformer` | **85.1% ± 1.8%** (winner) | 80.4% |
+| architecture | 5-fold CV accuracy | CV val loss | held-out split accuracy |
+|---|---|---|---|
+| `mlp` | 84.0% ± 2.5% | **0.4783** (winner) | 78.2% |
+| `deep_mlp` | 84.3% ± 2.5% | 0.4942 | 80.4% |
+| `tab_transformer` | **85.4% ± 1.9%** (highest accuracy) | 0.4822 | 79.9% |
 
-  `tab_transformer` wins clearly on CV (lowest mean loss, 0.4841) — a much
-  more confident margin than the single held-out split alone would suggest,
-  which is exactly why CV was added for architecture selection.
+  `train.py` picks the winner by lowest mean **CV loss**, not highest CV
+  accuracy — loss reflects prediction confidence/calibration, not just which
+  side of 0.5 a prediction lands on, and it's the metric each model was
+  actually trained to minimize. Here that means `mlp` wins even though
+  `tab_transformer` has the highest CV accuracy; see the benchmark
+  notebook's takeaways for why this is a deliberate, principled choice
+  rather than a quirk.
 - Benchmark notebook: on the same 5-fold CV, the strongest classical
-  baseline was **CatBoost at 84.4% ± 1.9%** — close behind
-  `tab_transformer` (85.1% ± 1.8%, similarly tight variance, so it's a real
-  if modest edge, not noise). XGBoost and LightGBM trailed at ~81.9% despite
-  their reputation; HistGradientBoosting/Random Forest/Logistic Regression
-  landed in the same band as the PyTorch MLPs (~83%). See the notebook's
-  takeaways for discussion, including why this shouldn't be read as a
-  strong general claim that transformers beat gradient boosting on small
-  tabular data.
+  baseline was **CatBoost at 84.0%** — essentially tied with the winning
+  `mlp` (83.9%). Logistic Regression, a simple linear baseline, reached
+  83.2%; XGBoost trailed the whole pack at 80.9% despite its reputation —
+  with a dataset this small, boosting-library defaults don't automatically
+  translate into a win. See the notebook's takeaways for the full ranking
+  and discussion.
 - Top permutation-importance features for the winning model: `Title`, `Sex`,
-  `Pclass`, `FamilySize`, `GroupSurvivalRate` — consistent with the
+  `FamilySize`, `Age`, `GroupSurvivalRate` — `Age` now shows up in the top 5
+  (it didn't before the Title-based imputation fix), consistent with the
   "women, children, and travel-party fate" signal the EDA notebook
   identifies.
 - App: `streamlit run ds_app.py` → opens at `http://localhost:8501` with

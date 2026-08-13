@@ -42,13 +42,22 @@ _TITLE_MAP = {
     "Sir": "Rare", "Jonkheer": "Rare", "Dona": "Rare",
 }
 
+# Deck "T" has exactly one passenger in the whole dataset — a near-unique
+# one-hot column that's pure noise for the model and can easily be entirely
+# absent from either the train or validation fold. That one cabin (T) was a
+# First Class cabin on the same deck level as the A deck cabins, so folding
+# it into "A" is the standard fix (a fixed domain mapping, not something fit
+# from data, so it's the same on train/val/inference — no leakage).
+_DECK_MAP = {"T": "A"}
+
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """Derive Title, FamilySize, HasCabin, Deck, TicketGroupSize,
     FarePerPerson, IsAlone from the raw Titanic columns.
 
-    (GroupSurvivalRate is *not* added here — it needs fitted train-only
-    statistics, so each preprocessor class computes it separately.)
+    (GroupSurvivalRate and Age imputation are *not* done here — they need
+    fitted train-only statistics, so each preprocessor class computes them
+    separately via `_GroupSurvivalEncoder` / `_TitleAgeImputer`.)
     """
     df = df.copy()
 
@@ -63,7 +72,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["FamilySize"] = df["SibSp"].fillna(0) + df["Parch"].fillna(0) + 1
     df["IsAlone"] = (df["FamilySize"] == 1).map({True: "Yes", False: "No"})
     df["HasCabin"] = df["Cabin"].notna().map({True: "Yes", False: "No"})
-    df["Deck"] = df["Cabin"].str[0].fillna("U")
+    df["Deck"] = df["Cabin"].str[0].fillna("U").replace(_DECK_MAP)
 
     # People traveling on the same ticket number are a travel party (family,
     # servants, friends) — the raw fare on a ticket is the party's *total*
@@ -74,6 +83,37 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["FarePerPerson"] = df["Fare"] / ticket_group_size.replace(0, 1)
 
     return df
+
+
+class _TitleAgeImputer:
+    """Fills missing Age (~20% of rows) using the median age for the
+    passenger's Title, rather than one dataset-wide median.
+
+    Age varies hugely by Title — e.g. `Master` (young boys) has a true
+    median age of ~3.5 vs. ~28 for the dataset as a whole — so a single
+    global median badly mis-imputes exactly the rows where Title already
+    tells us a lot about age. Fit on the training split only; unseen/NaN
+    titles at transform time fall back to the training set's global median.
+    """
+
+    def __init__(self) -> None:
+        self._medians: dict[str, float] = {}
+        self._global_median: float = 28.0
+        self._is_fit = False
+
+    def fit(self, df: pd.DataFrame) -> None:
+        self._global_median = float(df["Age"].median())
+        self._medians = df.groupby("Title")["Age"].median().to_dict()
+        self._is_fit = True
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        if not self._is_fit:
+            raise RuntimeError("_TitleAgeImputer must be fit before calling transform().")
+        df = df.copy()
+        fill_values = df["Title"].map(self._medians).astype(float)
+        fill_values = fill_values.fillna(self._global_median)
+        df["Age"] = df["Age"].fillna(fill_values)
+        return df
 
 
 class _GroupSurvivalEncoder:
@@ -150,6 +190,7 @@ class TitanicPreprocessor:
             ]
         )
         self._group_encoder = _GroupSurvivalEncoder()
+        self._age_imputer = _TitleAgeImputer()
         self._is_fit = False
         self.n_features_: int | None = None
 
@@ -157,6 +198,8 @@ class TitanicPreprocessor:
         if TARGET not in df.columns:
             raise RuntimeError("fit_transform requires a 'Survived' column.")
         df = engineer_features(df)
+        self._age_imputer.fit(df)
+        df = self._age_imputer.transform(df)
         df["GroupSurvivalRate"] = self._group_encoder.fit_transform(df, df[TARGET])
         X = self.column_transformer.fit_transform(
             df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
@@ -168,12 +211,14 @@ class TitanicPreprocessor:
         return X.astype(np.float32), y
 
     def engineer(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Engineered dataframe (incl. fitted GroupSurvivalRate), without
-        the final impute/scale/one-hot step. Exposed so feature-importance
-        analysis can permute one column at a time before that final step."""
+        """Engineered dataframe (incl. fitted Age imputation and
+        GroupSurvivalRate), without the final impute/scale/one-hot step.
+        Exposed so feature-importance analysis can permute one column at a
+        time before that final step."""
         if not self._is_fit:
             raise RuntimeError("Preprocessor must be fit before calling engineer().")
         df = engineer_features(df)
+        df = self._age_imputer.transform(df)
         df["GroupSurvivalRate"] = self._group_encoder.transform(df)
         return df
 
@@ -224,6 +269,7 @@ class TitanicTokenizer:
             handle_unknown="use_encoded_value", unknown_value=-1
         )
         self._group_encoder = _GroupSurvivalEncoder()
+        self._age_imputer = _TitleAgeImputer()
         self._is_fit = False
         self.cardinalities: list[int] = []
 
@@ -233,6 +279,8 @@ class TitanicTokenizer:
         if TARGET not in df.columns:
             raise RuntimeError("fit_transform requires a 'Survived' column.")
         df = engineer_features(df)
+        self._age_imputer.fit(df)
+        df = self._age_imputer.transform(df)
         df["GroupSurvivalRate"] = self._group_encoder.fit_transform(df, df[TARGET])
 
         num = self._numeric_imputer.fit_transform(df[NUMERIC_FEATURES])
@@ -248,12 +296,14 @@ class TitanicTokenizer:
         return num, cat, y
 
     def engineer(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Engineered dataframe (incl. fitted GroupSurvivalRate), without
-        the final impute/scale/ordinal-encode step. Exposed so feature-
-        importance analysis can permute one column at a time first."""
+        """Engineered dataframe (incl. fitted Age imputation and
+        GroupSurvivalRate), without the final impute/scale/ordinal-encode
+        step. Exposed so feature-importance analysis can permute one column
+        at a time first."""
         if not self._is_fit:
             raise RuntimeError("Tokenizer must be fit before calling engineer().")
         df = engineer_features(df)
+        df = self._age_imputer.transform(df)
         df["GroupSurvivalRate"] = self._group_encoder.transform(df)
         return df
 
